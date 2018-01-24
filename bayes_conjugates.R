@@ -3,26 +3,6 @@
 `%<>%` <- magrittr::`%<>%`
 `%||%` <- purrr::`%||%`
 
-######################
-### Data Generator ###
-######################
-Multinomial_Generator = R6::R6Class("Multinomial_Generator",
-                                    public = list(
-                                      initialize = function(multinomial_table) {
-                                        private$multinomial_table = multinomial_table
-                                      },
-                                      generate_data = function() {
-                                        choice = sample(1:nrow(private$multinomial_table),
-                                                        size = 1 , 
-                                                        prob = private$multinomial_table$.probs)
-                                        invisible(private$multinomial_table$.labels[choice])
-                                      }
-                                    ),
-                                    private = list(
-                                      multinomial_table = NULL
-                                    )
-)
-
 ###################################
 ### Multinomial Dirichlet model ###
 ###################################
@@ -49,17 +29,34 @@ r_multinomial_dirichlet_post = function(data, features, label_name)
   invisible(param)
 }
 
+Multinomial_Generator = R6::R6Class("Multinomial_Generator",
+                                    public = list(
+                                      initialize = function(multinomial_table) {
+                                        private$multinomial_table = multinomial_table
+                                      },
+                                      generate_data = function() {
+                                        choice = sample(1:nrow(private$multinomial_table),
+                                                        size = 1 , 
+                                                        prob = private$multinomial_table$.probs)
+                                        invisible(private$multinomial_table$.labels[choice])
+                                      }
+                                    ),
+                                    private = list(
+                                      multinomial_table = NULL
+                                    )
+)
+
 r_multinomial_dirichlet_data = function(data, features, label_name, prob_table)
 {
   prob_table %<>% 
-    dplyr::group_by_at(dplyr::vars(features %||% -dplyr::everything())) %>%
+    dplyr::group_by_at(features %||% dplyr::vars(-dplyr::everything())) %>%
     tidyr::nest(.key = .multinomial_table) %>%
     dplyr::mutate(.generators = purrr::map(.multinomial_table,
                                            function(x) Multinomial_Generator$new(x))) %>%
     dplyr::select(-.multinomial_table) %>%
     dplyr::ungroup()
     
-  complete_data = data %>% 
+  complete_data = data %>%
     dplyr::inner_join(prob_table, by = features) %>%
     dplyr::mutate(!!label_name := purrr::map(.generators, 
                                              function(x) x$generate_data())) %>%
@@ -68,127 +65,92 @@ r_multinomial_dirichlet_data = function(data, features, label_name, prob_table)
   invisible(complete_data)
 }
 
-##################################
-### Multinomial Dirichlet test ###
-##################################
-
-### Test data
-#label_name = "f1"
-#labels = c(1,2,3)
-#feature_list = list(f2 = c("a","b"), f3 = c("d","e"))
-#features = names(feature_list)
-#covariates = c("c1", "c2")
-#data = c(feature_list, list(f1=labels)) %>%
-#  purrr::cross_df() %>%
-#  dplyr::mutate(c1 = rnorm(length(f1)),
-#                c2 = rnorm(length(f1)))
-
-#r_multinomial_dirichlet_prior(feature_list, labels) %>% print()
-#prob_table = r_multinomial_dirichlet_post(data, features, label_name) %>% print()
-#r_multinomial_dirichlet_data(data, features, label_name, prob_table) %>% print()
-
 ### Normal NIG model
 
-r_normal_nig_prior = function(feature_list, label_name, labels)
+r_normal_nig_prior = function(covariates, feature_list)
 {
   all_vars = feature_list
-  all_vars[[label_name]] = labels
-  prob_table = cross_df(all_vars) %>%
-    mutate(.probs=rep(1/length(labels)))
-  invisible(prob_table)
+  all_vars$.param_name = c(covariates, ".sigma")
+  reg_table = purrr::cross_df(all_vars) %>%
+    dplyr::mutate(.param_value = ifelse(.param_name == ".sigma", 1, 0))
+  invisible(reg_table)
 }
 
-r_normal_nig_post = function(data, features, this_var)
+r_normal_nig_post_simple = function(.reg_data, resp_name)
 {
-  all_vars = c(this_var, features)
-  prob_table = data %>%
-    select(one_of(all_vars)) %>%
-    group_by_at(all_vars) %>%
-    summarise(.probs=n()+1) %>%
-    group_by_at(vars(features %||% -everything())) %>%
-    mutate(.probs=rdirichlet(1,.probs)) %>% 
-    nest(.key=.probs) %>%
-    ungroup()
-  invisible(prob_table)
-}
-
-r_normal_nig_data = function(features, features_data, prob_table, this_var)
-{
-  rmulti_new = function(multinomial_table, this_var)
-  {
-    choice = multinomial_table %>%
-      summarise(!!this_var := sample(1:length(.probs), size = 1, prob = .probs)) %>%
-      inner_join(multinomial_table, by = this_var) %>%
-      pull(!!this_var)
-    invisible(choice)
-  }
-  rmulti_new(multinomial_table, this_var) %>% print()
+  XX = .reg_data %>% 
+    dplyr::select(-dplyr::one_of(resp_name)) %>% 
+    as.matrix()
+  covariates = colnames(XX)
+  yy = .reg_data %>% 
+    dplyr::select(dplyr::one_of(resp_name)) %>%
+    as.matrix()
   
-  complete_data = features_data %>% 
-    inner_join(prob_table, by = features) %>%
-    mutate(!!this_var := map(.probs, function(x) rmulti_new(x, this_var))) %>% 
-    unnest_(this_var) %>%
-    select(-.probs)
+  aux1 = (t(XX) %*% XX) + diag(1, ncol(XX))
+  aux2 = solve(aux1)
+  coef_mean = aux2 %*% t(XX) %*% yy
+  coef_var = aux2
+  prec_alfa = 1 + nrow(XX)/2
+  prec_beta = 1 + 0.5*(sum(yy^2) - t(coef_mean) %*% aux1 %*% coef_mean)
+  .sigma = sqrt(1/(rgamma(1, prec_alfa, prec_beta)))
+  .means = mvtnorm::rmvnorm(1, 
+                            mean = coef_mean,
+                            sigma = .sigma^2 * coef_var) %>%
+    as.numeric()
+  
+  .reg_param = tibble::tibble(.param_name = c(covariates, ".sigma"),
+                              .param_value = c(.means, .sigma))
+  invisible(.reg_param)
+}
+
+r_normal_nig_post = function(covariates, data, features, resp_name)
+{
+  all_vars = c(covariates, features, resp_name)
+  quick_post = function(x) r_normal_nig_post_simple(x, resp_name)
+  reg_table = data %>%
+    dplyr::select(dplyr::one_of(all_vars)) %>%
+    dplyr::group_by_at(features %||% dplyr::vars(-dplyr::everything())) %>%
+    tidyr::nest(.key = .reg_data) %>%
+    dplyr::mutate(.reg_param = purrr::map(.reg_data, quick_post)) %>%
+    dplyr::select(-.reg_data) %>%
+    tidyr::unnest() %>%
+    dplyr::ungroup()
+  invisible(reg_table)
+}
+
+gen_linear_reg = function(.perm_data, .reg_table, resp_name) {
+  XX = .perm_data %>% as.matrix()
+  covariates = colnames(XX)
+  sd = .reg_table %>% 
+    dplyr::filter(.param_name == ".sigma") %>%
+    dplyr::select(.param_value) %>%
+    dplyr::pull()
+  beta = .reg_table %>%
+    dplyr::filter(.param_name != ".sigma") %>%
+    dplyr::inner_join(tibble::tibble(.param_name = covariates),
+                      by = ".param_name") %>%
+    dplyr::select(.param_value) %>%
+    dplyr::pull()
+  yy = XX %*% beta + rnorm(nrow(XX), mean = 0, sd = sd)
+  colnames(yy) = c(resp_name)
+  invisible(tibble::as.tibble(cbind(XX, yy)))
+}
+
+r_normal_nig_data = function(covariates, data, features, reg_table, resp_name)
+{
+  reg_table %<>% 
+    dplyr::group_by_at(dplyr::vars(features %||% -dplyr::everything())) %>%
+    tidyr::nest(.key = .reg_table)
+  
+  complete_data = data %>%
+    dplyr::select(dplyr::one_of(c(covariates, features))) %>%
+    dplyr::group_by_at(features %||% dplyr::vars(-dplyr::everything())) %>%
+    tidyr::nest(.key = .perm_data) %>%
+    dplyr::inner_join(reg_table, by = features) %>%
+    dplyr::mutate(.perm_data = purrr::map2(.perm_data, .reg_table, 
+                                           function(x, y) gen_linear_reg(x, y, resp_name))) %>%
+    dplyr::select(-.reg_table) %>%
+    tidyr::unnest() %>%
+    dplyr::ungroup()
   invisible(complete_data)
 }
-
-## Lixo
-
-Cond_Reg_Table = R6Class("Cond_Reg_Table",
-                         public=list(
-                           covariates = NULL,
-                           features = NULL,
-                           node_name = NULL,
-                           regression_coefs = NULL,
-                           regression_precisions = NULL,
-                           regression_precisions_hyp = NULL,
-                           initialize = function(covariates, feature_list, node_name) {
-                             self$covariates = covariates
-                             self$features = names(feature_list)
-                             self$node_name = node_name
-                             all_vars = feature_list
-                             all_vars[[".parameters"]] = c(covariates, ".precision")
-                             self$regression_param = all_vars %>%
-                               cross_df %>%
-                               mutate(.values=0.1)
-                             invisible(self)
-                           },
-                           #Gibbs
-                           update = function() {
-                             new_param <- function(df, covariates, node_name) {
-                               XX = data %>%
-                                 select(one_of(covariates)) %>%
-                                 as.matrix()
-                               yy = data %>%
-                                 select(one_of(node_name)) %>%
-                                 as.matrix()
-                               aux1 = solve(diag(1,ncol(XX)) + t(XX) %*% XX)
-                               coef_mean = aux1 %*% t(XX) %*% yy
-                               coef_var = aux1
-                               prec_alfa = 1 + nrow(XX)/2
-                               prec_beta = 1 + 0.5*(sum(yy^2) - sum(coef_mean^2))
-                               
-                               new_prec = 1/rgamma(prec_alfa + prec_beta)
-                               new_coef = rmvnorm(1, mean = coef_mean, sigma = coef_var)
-                               
-                             }
-                             data %>%
-                               select(one_of(all_vars)) %>%
-                               group_by_at(vars(self$features %||% -everything())) %>%
-                               summarise(n = n(), 
-                                         .alfa1 = 1+n/2,
-                                         .beta1 = ) %>% #RESOLVER
-                               ungroup()
-                             
-                             all_vars = c(self$node_name, self$covariates, self$features)
-                             
-                             
-                             data %>%
-                               select(one_of(all_vars)) %>%
-                               group_by_at(vars(self$features %||% -everything())) %>%
-                               #Resolver %>% 
-                               ungroup()
-                             invisible(self)
-                           }
-                         )
-)

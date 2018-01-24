@@ -3,49 +3,25 @@
 `%<>%` <- magrittr::`%<>%`
 `%||%` <- purrr::`%||%`
 
-### Test data
-#label_name = "f1"
-#labels = c(1,2,3)
-#feature_list = list(f2=c("a","b"), f3=c("d","e"))
-#features = names(feature_list)
-#covariates = c("c1", "c2")
-#data <- c(feature_list, list(f1=labels)) %>%
-#  purrr::cross_df() %>%
-#  dplyr::mutate(c1=rnorm(length(f1)),
-#                c2=rnorm(length(f1)))
-
 ######################
 ### Data Generator ###
 ######################
-Data_Generator = R6::R6Class("Data_Generator",
-                             public = list(
-                               initialize = function(param, type) {
-                                 private$param = param
-                                 if(type == "multinomial")
-                                 {
-                                   private$generate_data = function()
-                                   {
-                                     choice = private$param %>%
-                                       dplyr::summarise(!!this_var := sample(1:length(.probs), size = 1, prob = .probs)) %>%
-                                       inner_join(multinomial_table, by = this_var) %>%
-                                       pull(!!this_var)
-                                     invisible(choice)
-                                   }
-                                 }
-                               }
-                             ),
-                             private = list(
-                               param = NULL,
-                               generate_data = function() {}
-                             )
+Multinomial_Generator = R6::R6Class("Data_Generator",
+                                    public = list(
+                                      initialize = function(multinomial_table) {
+                                        private$multinomial_table = multinomial_table
+                                      },
+                                      generate_data = function() {
+                                        choice = sample(1:nrow(private$multinomial_table),
+                                                        size =1 , 
+                                                        prob = private$multinomial_table$.probs)
+                                        invisible(private$multinomial_table$.labels[choice])
+                                      }
+                                    ),
+                                    private = list(
+                                      multinomial_table = NULL
+                                    )
 )
-
-new_generator = function(this_generator)
-{
-  new_object = Data_Generator$new(this_generator)
-  invisible(new_object)
-}
-
 
 ###################################
 ### Multinomial Dirichlet model ###
@@ -58,7 +34,6 @@ r_multinomial_dirichlet_prior = function(feature_list, label_name, labels)
       dplyr::mutate(.probs = rep(1/length(labels)))
     invisible(param)
 }
-#r_multinomial_dirichlet_prior(feature_list, label_name, labels) %>% print()
 
 r_multinomial_dirichlet_post = function(data, features, label_name)
 {
@@ -72,35 +47,36 @@ r_multinomial_dirichlet_post = function(data, features, label_name)
     dplyr::ungroup()
   invisible(param)
 }
-#r_multinomial_dirichlet_post(data, features, label_name) %>% print()
-
-multinomial_dirichlet_generator(features, label_name, param)
-{
-  r_multinomial = function(multinomial_table, label_name)
-  {
-    choice = multinomial_table %>%
-      summarise(!!this_var := sample(1:length(.probs), size = 1, prob = .probs)) %>%
-      inner_join(multinomial_table, by = this_var) %>%
-      pull(!!this_var)
-    invisible(choice)
-  }
-}
 
 r_multinomial_dirichlet_data = function(features, features_data, prob_table, this_var)
 {
-  rmulti_new = function(multinomial_table, this_var)
-  {
-    
-  }
-  rmulti_new(multinomial_table, this_var) %>% print()
+  features %||% -dplyr::everything()
   
   complete_data = features_data %>% 
-    inner_join(prob_table, by = features) %>%
+    dplyr::inner_join(prob_table, by = features) %>%
     mutate(!!this_var := map(.probs, function(x) rmulti_new(x, this_var))) %>% 
     unnest_(this_var) %>%
     select(-.probs)
   invisible(complete_data)
 }
+
+##################################
+### Multinomial Dirichlet test ###
+##################################
+
+### Test data
+#label_name = "f1"
+#labels = c(1,2,3)
+#feature_list = list(f2=c("a","b"), f3=c("d","e"))
+#features = names(feature_list)
+#covariates = c("c1", "c2")
+#data <- c(feature_list, list(f1=labels)) %>%
+#  purrr::cross_df() %>%
+#  dplyr::mutate(c1=rnorm(length(f1)),
+#                c2=rnorm(length(f1)))
+
+#r_multinomial_dirichlet_prior(feature_list, label_name, labels) %>% print()
+#prob_table = r_multinomial_dirichlet_post(data, features, label_name)
 
 ### Normal NIG model
 

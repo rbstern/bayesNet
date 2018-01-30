@@ -1,9 +1,9 @@
 source("null_exceptions.R")
 
 #Special operators
-`%>%` <- magrittr::`%>%`
-`%<>%` <- magrittr::`%<>%`
-`%||%` <- purrr::`%||%`
+`%>%` = magrittr::`%>%`
+`%<>%` = magrittr::`%<>%`
+`%||%` = purrr::`%||%`
 
 ###################################
 ### Multinomial Dirichlet model ###
@@ -25,8 +25,8 @@ r_multinomial_dirichlet_post = function(data, features, label_name)
     dplyr::group_by_at(all_vars) %>%
     dplyr::summarise(.probs = n() + 1) %>%
     dplyr::group_by_at(features %||% dplyr::vars(-dplyr::everything())) %>%
-    dplyr::mutate(.probs = LaplacesDemon::rdirichlet(1,.probs)) %>% 
-    dplyr::rename(.labels=!!label_name) %>%
+    dplyr::mutate(.probs = LaplacesDemon::rdirichlet(1, .probs)) %>% 
+    dplyr::rename(.labels = !!label_name) %>%
     dplyr::ungroup()
   invisible(param)
 }

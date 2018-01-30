@@ -54,6 +54,20 @@ r_normal_nig_post(covariates, data, features, resp_name) %>% print()
 reg_table = r_normal_nig_post(covariates, data, features, resp_name)
 r_normal_nig_data(covariates, data, features, reg_table, resp_name) %>% print()
 
+### Test data (2 features and 0 covariates)
+feature_list = list(f2 = c("a","b"), f3 = c("d","e"))
+features = names(feature_list)
+resp_name = "c1"
+covariates = NULL
+data = feature_list %>%
+  purrr::cross_df()
+for(ii in 1:10) { data %<>% rbind(data) }
+data %<>% dplyr::mutate(c1 = rnorm(nrow(data)))
+r_normal_nig_prior(covariates, feature_list) %>% print()
+r_normal_nig_post(covariates, data, features, resp_name) %>% print()
+reg_table = r_normal_nig_post(covariates, data, features, resp_name)
+r_normal_nig_data(covariates, data, features, reg_table, resp_name) %>% print()
+
 ## Test data 2 (2 covariates, 0 features)
 feature_list = list()
 features = names(feature_list)
